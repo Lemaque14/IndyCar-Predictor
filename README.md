@@ -9,7 +9,7 @@ The model was trained using PyCaret with a CatBoost estimator and is executed lo
 ## Windows ##
 python -m venv .venv
 .\.venv\Scripts\activate
-## Mac / Linux##
+## Mac / Linux
 python3 -m venv
 source .venv/bin/activate
 ### 3). Install dependencies
