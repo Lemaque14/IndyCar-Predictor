@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 from catboost import CatBoostClassifier, CatBoostRegressor
 import joblib
+from pathlib import Path
+
 
 # --- Helper Functions ---
 # Convert 'BestLapTime' to seconds
@@ -35,9 +37,11 @@ def load_model_and_schema(model_path: str, data_path: str):
     X_cols = df.drop(columns=['BestLapTime', 'PositionFinish']).columns.tolist()
     return model, X_cols
 
+Base_dir = Path(__file__).resolve().parent
+
 model, FEATURE_COLS = load_model_and_schema(
-    model_path="C:\\Users\\ripa_\\Desktop\\Programing\\IndyCar_Project\\models\\indycar_cat_model_v1.pkl",
-    data_path="C:\\Users\\ripa_\\Desktop\\Programing\\IndyCar_Project\\datasets\\IndyCar_Regression_Data_vO2.csv"
+    model_path= Base_dir/"models"/"indycar_cat_model_v1.pkl",
+    data_path= Base_dir/"datasets"/"IndyCar_Regression_Data_vO2.csv"
 )
 
 # --- Static Lists ---
