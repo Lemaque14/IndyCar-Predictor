@@ -1,175 +1,246 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from catboost import CatBoostClassifier, CatBoostRegressor
-import joblib
+from pycaret.regression import load_model, predict_model
 from pathlib import Path
-
-
-# --- Helper Functions ---
-# Convert 'BestLapTime' to seconds
-def time_to_seconds(time_str):
-    if isinstance(time_str, str):
-        parts = time_str.split(':')
-        if len(parts) == 2:
-            minutes, seconds = parts
-            return int(minutes) * 60 + float(seconds)
-        elif len(parts) == 3:
-            hours, minutes, seconds = parts
-            return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
-    return np.nan
-
-def get_track_meta(track_code: str):
-    meta = TRACKS_MAP.get(track_code, {})
-    laps = meta.get('laps', np.nan)
-    iD = meta.get('id', None)
-    return laps, iD
-
-
-
-# --- Load Model & Schema ---
-@st.cache_resource
-def load_model_and_schema(model_path: str, data_path: str):
-    
-    model = joblib.load(model_path)
-    df = pd.read_csv(data_path)
-    df['BestLapTime_seconds'] = df['BestLapTime'].apply(time_to_seconds)
-    X_cols = df.drop(columns=['BestLapTime', 'PositionFinish']).columns.tolist()
-    return model, X_cols
 
 Base_dir = Path(__file__).resolve().parent
 
-model, FEATURE_COLS = load_model_and_schema(
-    model_path= Base_dir/"models"/"indycar_cat_model_v1.pkl",
-    data_path= Base_dir/"datasets"/"IndyCar_Regression_Data_vO2.csv"
-)
+# --- Model Paths ---
+PRE_QUALI_MODEL_PATH  = Base_dir / "models" / "indycar_cat_lgbm_prequaly_model_v1"
+POST_QUALI_MODEL_PATH = Base_dir / "models" / "indycar_postqualy_model_v1"
+DATA_PATH             = Base_dir / "datasets" / "IndyCar_dataset_v12.csv"
 
-# --- Static Lists ---
-TRACKS_MAP = {
-    'BAR' : {'laps': 90, 'id': 1},
-    'DET' : {'laps': 100, 'id': 2},
-    'GPI' : {'laps': 85, 'id': 3},
-    'IND' : {'laps': 200, 'id': 4},
-    'IOW' : {'laps': 275, 'id': 5},
-    'LB' : {'laps': 90, 'id': 6},
-    'MIL' : {'laps': 250, 'id': 7},
-    'MOH' : {'laps': 90, 'id': 8},
-    'NAS' : {'laps': 206, 'id': 9},
-    'NASH' : {'laps': 80, 'id': 10},
-    'POR' : {'laps': 110, 'id': 11},
-    'R-AM' : {'laps': 55, 'id': 12},
-    'STL' : {'laps': 260, 'id': 13},
-    'STP' : {'laps': 100, 'id': 14},
-    'TEX' : {'laps': 250, 'id': 15},
-    'THRM' : {'laps': 65, 'id': 16},
-    'TOR' : {'laps': 90, 'id': 17},
-    'WRLS' : {'laps': 95, 'id': 18}
-}
+# --- Load model on demand ---
+@st.cache_resource
+def load_selected_model(model_path: str):
+    return load_model(model_path)
 
-TEAMS_MAP  = {
-    'A.J. Foyt Enterprises' : 1,
-    'Andretti Global' : 2,
-    'Arrow McLaren' : 3,
-    'Chip Ganassi Racing' : 4,
-    'Dale Coyne Racing' : 5,
-    'Ed Carpenter Racing' : 6,
-    'Juncos Hollinger Racing' : 7,
-    'Meyer Shank Racing' : 8,
-    'PREMA Racing' : 9,
-    'Rahal Letterman Lanigan Racing' : 10,
-    'Team Penske' : 11
-}
+@st.cache_data
+def load_feature_cols(data_path: str, is_post_quali: bool):
+    df = pd.read_csv(data_path)
+    drop_cols = [
+        "DriverName", "TeamName", "CarEngine", "EventName", "Track", "EventTrackType",
+        "EventDate", "EventDateFormatted", "EventID", "Era",
+        "Status", "StatusID", "PositionFinish"
+    ]
+    if not is_post_quali:
+        drop_cols.append("PositionStart")
+    return df.drop(columns=drop_cols, errors='ignore').columns.tolist()
 
+@st.cache_data
+def load_dataset_means(data_path: str):
+    df = pd.read_csv(data_path)
+    return df.select_dtypes(include=[np.number]).mean().to_dict()
+
+@st.cache_data
+def load_latest_driver_stats(data_path: str):
+    df = pd.read_csv(data_path)
+    df["EventDate"] = pd.to_datetime(df["EventDate"])
+    # Get most recent row per driver
+    return df.sort_values("EventDate").groupby("DriverID").last().to_dict("index")
+
+@st.cache_data
+def load_latest_team_stats(data_path: str):
+    df = pd.read_csv(data_path)
+    df["EventDate"] = pd.to_datetime(df["EventDate"])
+    # Get most recent row per team
+    return df.sort_values("EventDate").groupby("TeamID").last().to_dict("index")
+
+# --- Driver Map: Name -> {id, team_id, team_name, rookie} ---
 DRIVERS_MAP = {
-    'Alex Palou' : 4931,
-    'Alexander Rossi' : 4587,
-    'Callum Ilott' : 4939,
-    'Christian Lundgaard' : 4938,
-    'Christian Rasmussen' : 4920,
-    'Colton Herta' : 4511,
-    'Conor Daly' : 4218,
-    'David Malukas' : 4636,
-    'Devlin DeFrancesco' : 4940,
-    'Felix Rosenqvist' : 4588,
-    'Graham Rahal' : 3668,
-    'Jacob Abel' : 4644,
-    'Josef Newgarden' : 4215,
-    'Kyffin Simpson' : 4944,
-    'Kyle Kirkwood' : 4623,
-    'Louis Foster' : 4949,
-    'Marcus Armstrong' : 4948,
-    'Marcus Ericsson' : 4905,
-    'Nolan Siegel' : 4915,
-    "Pato O'Ward" : 4559,
-    'Robert Shwartzman' : 4918,
-    'Rinus VeeKay' : 4614,
-    'Santino Ferrucci' : 4897,
-    'Scott Dixon' : 3628,
-    'Scott McLaughlin' : 4932,
-    'Sting Ray Robb' : 4613,
-    'Will Power' : 3667
+    "Marcus Armstrong":    {"id": 4948, "team_id": 19, "team_name": "Meyer Shank Racing",              "rookie": False},
+    "Caio Collet":         {"id": None, "team_id": 1,  "team_name": "A.J. Foyt Enterprises",           "rookie": True},
+    "Scott Dixon":         {"id": 3628, "team_id": 9,  "team_name": "Chip Ganassi Racing",             "rookie": False},
+    "Marcus Ericsson":     {"id": 4905, "team_id": 3,  "team_name": "Andretti Global",                 "rookie": False},
+    "Santino Ferrucci":    {"id": 4897, "team_id": 1,  "team_name": "A.J. Foyt Enterprises",           "rookie": False},
+    "Louis Foster":        {"id": 4949, "team_id": 24, "team_name": "Rahal Letterman Lanigan Racing",  "rookie": False},
+    "Romain Grosjean":     {"id": 4935, "team_id": 11, "team_name": "Dale Coyne Racing",               "rookie": False},
+    "Dennis Hauger":       {"id": None, "team_id": 11, "team_name": "Dale Coyne Racing",               "rookie": True},
+    "Kyle Kirkwood":       {"id": 4623, "team_id": 3,  "team_name": "Andretti Global",                 "rookie": False},
+    "Christian Lundgaard": {"id": 4938, "team_id": 4,  "team_name": "Arrow McLaren",                   "rookie": False},
+    "David Malukas":       {"id": 4636, "team_id": 28, "team_name": "Team Penske",                     "rookie": False},
+    "Scott McLaughlin":    {"id": 4932, "team_id": 28, "team_name": "Team Penske",                     "rookie": False},
+    "Josef Newgarden":     {"id": 4215, "team_id": 28, "team_name": "Team Penske",                     "rookie": False},
+    "Pato O'Ward":         {"id": 4559, "team_id": 4,  "team_name": "Arrow McLaren",                   "rookie": False},
+    "Alex Palou":          {"id": 4931, "team_id": 9,  "team_name": "Chip Ganassi Racing",             "rookie": False},
+    "Will Power":          {"id": 3667, "team_id": 3,  "team_name": "Andretti Global",                 "rookie": False},
+    "Graham Rahal":        {"id": 3668, "team_id": 24, "team_name": "Rahal Letterman Lanigan Racing",  "rookie": False},
+    "Christian Rasmussen": {"id": 4920, "team_id": 15, "team_name": "Ed Carpenter Racing",             "rookie": False},
+    "Sting Ray Robb":      {"id": 4613, "team_id": 16, "team_name": "Juncos Hollinger Racing",         "rookie": False},
+    "Felix Rosenqvist":    {"id": 4588, "team_id": 19, "team_name": "Meyer Shank Racing",              "rookie": False},
+    "Alexander Rossi":     {"id": 4587, "team_id": 15, "team_name": "Ed Carpenter Racing",             "rookie": False},
+    "Mick Schumacher":     {"id": None, "team_id": 24, "team_name": "Rahal Letterman Lanigan Racing",  "rookie": True},
+    "Nolan Siegel":        {"id": 4915, "team_id": 4,  "team_name": "Arrow McLaren",                   "rookie": False},
+    "Kyffin Simpson":      {"id": 4944, "team_id": 9,  "team_name": "Chip Ganassi Racing",             "rookie": False},
+    "Rinus VeeKay":        {"id": 4614, "team_id": 16, "team_name": "Juncos Hollinger Racing",         "rookie": False},
 }
 
-TRACK_TYPE_DISPLAY = {
-    "Road Course": 1,
-    "Oval":       0,
-    "Street Circuit": 2
+# --- Team Map: TeamID -> {engine, engine_id} ---
+TEAMS_MAP = {
+    1:  {"name": "A.J. Foyt Enterprises",          "engine": "Chevrolet", "engine_id": 0},
+    3:  {"name": "Andretti Global",                 "engine": "Honda",     "engine_id": 1},
+    4:  {"name": "Arrow McLaren",                   "engine": "Chevrolet", "engine_id": 0},
+    9:  {"name": "Chip Ganassi Racing",             "engine": "Honda",     "engine_id": 1},
+    11: {"name": "Dale Coyne Racing",               "engine": "Honda",     "engine_id": 1},
+    15: {"name": "Ed Carpenter Racing",             "engine": "Chevrolet", "engine_id": 0},
+    16: {"name": "Juncos Hollinger Racing",         "engine": "Chevrolet", "engine_id": 0},
+    19: {"name": "Meyer Shank Racing",              "engine": "Honda",     "engine_id": 1},
+    24: {"name": "Rahal Letterman Lanigan Racing",  "engine": "Honda",     "engine_id": 1},
+    28: {"name": "Team Penske",                     "engine": "Chevrolet", "engine_id": 0},
 }
 
+# --- Track Map: Name -> {id, type, type_id, is_new} ---
+TRACKS_MAP = {
+    "Streets of St. Petersburg":      {"id": 21, "type": "Street", "type_id": 2, "is_new": False},
+    "Phoenix Raceway":                {"id": 10, "type": "Oval",   "type_id": 0, "is_new": False},
+    "Streets of Arlington":           {"id": None,"type": "Street", "type_id": 2, "is_new": True},
+    "Barber Motorsports Park":        {"id": 1,  "type": "Road",   "type_id": 1, "is_new": False},
+    "Streets of Long Beach":          {"id": 18, "type": "Street", "type_id": 2, "is_new": False},
+    "Indianapolis Motor Speedway (Road)": {"id": 3,  "type": "Road",   "type_id": 1, "is_new": False},
+    "Indianapolis Motor Speedway (Oval)": {"id": 4,  "type": "Oval",   "type_id": 0, "is_new": False},
+    "Streets of Detroit":             {"id": 17, "type": "Street", "type_id": 2, "is_new": False},
+    "World Wide Technology Raceway":  {"id": 28, "type": "Oval",   "type_id": 0, "is_new": False},
+    "Road America":                   {"id": 14, "type": "Road",   "type_id": 1, "is_new": False},
+    "Mid-Ohio Sports Car Course":     {"id": 6,  "type": "Road",   "type_id": 1, "is_new": False},
+    "Nashville Superspeedway":        {"id": 8,  "type": "Oval",   "type_id": 0, "is_new": False},
+    "Portland International Raceway": {"id": 12, "type": "Road",   "type_id": 1, "is_new": False},
+    "Streets of Markham":             {"id": None,"type": "Street", "type_id": 2, "is_new": True},
+    "Streets of Washington":          {"id": None,"type": "Street", "type_id": 2, "is_new": True},
+    "WeatherTech Raceway Laguna Seca":{"id": 27, "type": "Road",   "type_id": 1, "is_new": False},
+    "Milwaukee Mile":                 {"id": 7,  "type": "Oval",   "type_id": 0, "is_new": False},
+}
 
+# --- Helper: denormalize position ---
+def denormalize_position(norm_val: float, field_size: int = 25) -> int:
+    raw = norm_val * (field_size - 1) + 1
+    return int(round(np.clip(raw, 1, field_size)))
 
-# Filter only those that match model's feature columns
-TRACK_OPTIONS  = [t for t in TRACKS_MAP if t in FEATURE_COLS or 'TrackID' in FEATURE_COLS]
-TEAM_OPTIONS   = [t for t in TEAMS_MAP if (('TeamID' in FEATURE_COLS) or (t in FEATURE_COLS))]
-DRIVER_OPTIONS = [d for d in DRIVERS_MAP if (('DriverID' in FEATURE_COLS) or (d in FEATURE_COLS))]
-TRACK_TYPE_OPTIONS = list(TRACK_TYPE_DISPLAY.keys())
-
-# --- Streamlit UI ---
+# ============================================================
+# Streamlit UI
+# ============================================================
+st.set_page_config(page_title="IndyCar Predictor", layout="centered")
 st.title("IndyCar Race Result Predictor")
-st.markdown("Fill in the fields below and click **Predict** to estimate finishing position.")
+st.markdown("Select your inputs below and click **Predict** to estimate a driver's finishing position.")
+
+# --- Model Mode Selection ---
+st.subheader("Prediction Mode")
+mode = st.radio(
+    "Select prediction stage:",
+    ["Pre-Qualy", "Post-Qualy"],
+    horizontal=True
+)
+is_post_quali = mode.startswith("Post")
+
+# --- Load correct model and features ---
+model_path = POST_QUALI_MODEL_PATH if is_post_quali else PRE_QUALI_MODEL_PATH
+model = load_selected_model(str(model_path))
+FEATURE_COLS = load_feature_cols(str(DATA_PATH), is_post_quali)
+DATASET_MEANS = load_dataset_means(str(DATA_PATH))
+DRIVER_STATS = load_latest_driver_stats(str(DATA_PATH))
+TEAM_STATS = load_latest_team_stats(str(DATA_PATH))
+
+st.divider()
+
+# --- Inputs ---
+st.subheader("Race Setup")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    driver_name = st.selectbox("Driver", list(DRIVERS_MAP.keys()))
+
+with col2:
+    track_name = st.selectbox("Track", list(TRACKS_MAP.keys()))
+
+# Post-quali only: show starting position input
+pos_start = None
+if is_post_quali:
+    pos_start = st.number_input("Starting Position", min_value=1, max_value=33, value=10)
+
+# --- Auto-resolve driver/team/track info ---
+driver_info = DRIVERS_MAP[driver_name]
+team_info   = TEAMS_MAP[driver_info["team_id"]]
+track_info  = TRACKS_MAP[track_name]
 
 
-# Inputs
-best_lap      = st.text_input("Best Qualy Lap Time (MM:SS.s)", "01:08.2")
-pos_start     = st.number_input("Starting Position", min_value=1, max_value=30, value=3)
-track         = st.selectbox("Track", TRACK_OPTIONS)
-track_type    = st.selectbox("Track Type", TRACK_TYPE_OPTIONS)
-team          = st.selectbox("Team", TEAM_OPTIONS)
-driver        = st.selectbox("Driver", DRIVER_OPTIONS)
+# --- Warnings for limited data ---
+warnings = []
+if driver_info["rookie"] or driver_info["id"] is None:
+    warnings.append(f"**{driver_name}** is a rookie or new to the series — prediction will be based on team stats and track type only.")
+if track_info["is_new"]:
+    warnings.append(f"**{track_name}** is a new track with no historical data — prediction will be based on track type only.")
 
-selected_track_code = track
-laps_complete, track_id = get_track_meta(selected_track_code)
+for w in warnings:
+    st.warning(w)
 
-if st.button("Predict"):
+st.divider()
+
+# --- Predict Button ---
+if st.button("Predict Finishing Position", use_container_width=True):
     try:
-        # Initialize feature vector with zeros
-        features = dict.fromkeys(FEATURE_COLS, 0)
+        # Start with dataset means as baseline for all features
+        features = {col: DATASET_MEANS.get(col, 0) for col in FEATURE_COLS}
 
-        bl_seconds = time_to_seconds(best_lap)
-        features['BestLapTime_seconds'] = float(bl_seconds)
-        features['LapsComplete']   = laps_complete
-        features['PositionStart']  = pos_start
-        features['Status']         = 0
+        # Driver features
+        features["Rookie"] = int(driver_info["rookie"] or driver_info["id"] is None)
 
-        if 'TrackID' in FEATURE_COLS and track_id is not None:
-            features['TrackID'] = track_id
-        if selected_track_code in FEATURE_COLS:
-            features[selected_track_code] = 1
+        if driver_info["id"] and not driver_info["rookie"]:
+            # Known driver — pull their latest real stats
+            driver_row = DRIVER_STATS.get(driver_info["id"], {})
+            for col in ["DRFAvg", "DTAvg", "DTTAvg", "DNFRate", "TDNFRate",
+                        "DriverElo", "DriverTElo", "DriverRitmo"]:
+                if col in FEATURE_COLS and col in driver_row:
+                    features[col] = driver_row[col]
+            if "DriverID" in FEATURE_COLS:
+                features["DriverID"] = int(driver_info["id"])
+        else:
+            # Rookie/new driver — use team stats as proxy
+            if "DriverID" in FEATURE_COLS:
+                features["DriverID"] = int(DATASET_MEANS.get("DriverID", 0))
+            for col in ["DRFAvg", "DTAvg", "DTTAvg", "DNFRate", "TDNFRate",
+                        "DriverElo", "DriverTElo", "DriverRitmo"]:
+                if col in FEATURE_COLS:
+                    features[col] = DATASET_MEANS.get(col, 0)
 
-        #(0 = Oval, 1 = Road, 2 = Street)
-        if 'TrackType' in FEATURE_COLS and track_type in TRACK_TYPE_DISPLAY:
-            features['TrackType'] =  TRACK_TYPE_DISPLAY[track_type]
+        # Team features
+        team_row = TEAM_STATS.get(driver_info["team_id"], {})
+        for col in ["TeamElo", "TeamTElo", "TeamRitmo", "TeamDNFRate"]:
+            if col in FEATURE_COLS and col in team_row:
+                features[col] = team_row[col]
+        if "TeamID" in FEATURE_COLS:
+            features["TeamID"] = int(driver_info["team_id"])
 
-        if 'TeamID' in FEATURE_COLS:
-            features['TeamID'] = int(TEAMS_MAP.get(team, 0))
+        # Track features
+        if "TrackID" in FEATURE_COLS:
+            features["TrackID"] = int(track_info["id"]) if track_info["id"] else int(DATASET_MEANS.get("TrackID", 0))
+        if "EventTrackTypeID" in FEATURE_COLS:
+            features["EventTrackTypeID"] = int(track_info["type_id"])
 
-        if 'DriverID' in FEATURE_COLS:
-            features['DriverID'] = int(DRIVERS_MAP.get(driver, 0))
+        # If new track — zero out track-specific stats
+        if track_info["is_new"]:
+            for col in ["TRP", "TTP", "TeamRitmo"]:
+                if col in FEATURE_COLS:
+                    features[col] = DATASET_MEANS.get(col, 0)
 
-        # Create DataFrame & predict
+        # Post-quali: add starting position
+        if is_post_quali and pos_start is not None:
+            if "PositionStart" in FEATURE_COLS:
+                features["PositionStart"] = int(pos_start)
+
+        # Build input DataFrame and predict
         input_df = pd.DataFrame([features], columns=FEATURE_COLS)
-        pred = model.predict(input_df)[0]
-        st.success(f"Predicted Finishing Position: {pred:.2f}")
+        result = predict_model(model, data=input_df)
+        norm_pred = result["prediction_label"].iloc[0]
+
+        # Denormalize
+        finish_pos = denormalize_position(norm_pred)
+
+        st.success(f"### Predicted Finishing Position: P{finish_pos}")
+        st.caption(f"Raw Position: {norm_pred * (25 - 1) + 1:.2f}")
+
+        if warnings:
+            st.info("Note: This prediction has lower confidence due to limited historical data for this driver/track combination.")
 
     except Exception as e:
-        st.error(f"Error in prediction: {e}")
+        st.error(f"Prediction error: {e}")
