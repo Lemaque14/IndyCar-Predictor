@@ -118,7 +118,7 @@ TEAMS_MAP = {
 TRACKS_MAP ={
 "Streets of St. Petersburg": {"id": 21, "type": "Street", "type_id": 2, "is_new": False},
     "Phoenix Raceway": {"id": 10, "type": "Oval", "type_id": 0, "is_new": False},
-    "Streets of Arlington": {"id": None,"type": "Street", "type_id": 2, "is_new": True},
+    "Streets of Arlington": {"id": 29,"type": "Street", "type_id": 2, "is_new": True},
     "Barber Motorsports Park": {"id": 1, "type": "Road", "type_id": 1, "is_new": False},
     "Streets of Long Beach": {"id": 18, "type": "Street", "type_id": 2, "is_new": False},
     "Indianapolis Motor Speedway (Road)": {"id": 3, "type": "Road", "type_id": 1, "is_new": False},
