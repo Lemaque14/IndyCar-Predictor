@@ -185,7 +185,7 @@ if has_results:
     worst = result_df.loc[result_df["Error"].idxmax(), "Driver"]
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Actual MAE", f"{computed_mae:.2f} positions")
+    c1.metric("Actual MAE", f"{computed_mae:.2f}")
     c2.metric("Best prediction", best)
     c3.metric("Worst prediction", worst)
 
