@@ -25,7 +25,7 @@ def error_color(val):
         if abs(n) <= 2:
             return "color: green"
         elif abs(n) <= 5:
-            return "color: yellow"
+            return "color: orange"
         return "color: red"
     except:
         return ""
@@ -116,6 +116,7 @@ with my_col:
     my_df = df_track[["MyRank", "Driver", "MyRawScore"]].copy()
     my_df = my_df.sort_values("MyRank").reset_index(drop=True)
     my_df.columns = ["Position", "Driver", "Score"]
+    my_df["Position"] = my_df["Position"].astype(int)
 
     st.dataframe(
         my_df.style.format({"Score": "{:.2f}"}),
@@ -161,20 +162,17 @@ if has_results:
     result_df["ModelRank"] = result_df["ModelRank"].astype(int)
     result_df["ActualFinish"] = result_df["ActualFinish"].astype(int)
     result_df["Error"] = (result_df["ActualFinish"] - result_df["ModelRank"]).abs()
+    result_df["ErrorColor"] = result_df["Error"].apply(
+        lambda e: "Good" if e <= 2 else ("Close" if e <= 5 else "Off"))
     result_df = result_df.sort_values("ActualFinish").reset_index(drop=True)
 
     bar = alt.Chart(result_df).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
         x=alt.X("Driver:N", sort=alt.EncodingSortField(field="ActualFinish", order="ascending"), title=""),
         y=alt.Y("Error:Q", title="Position Error"),
-        color=alt.condition(
-            alt.datum.Error <= 2,
-            alt.value("#3B6D11"),
-            alt.condition(
-                alt.datum.Error <= 5,
-                alt.value("#F5DA27"),
-                alt.value("#A32D2D")
-                )
-            ),
+        color=alt.Color("ErrorColor:N", scale=alt.Scale(
+            domain= ["Good", "Close", "Off"],
+            range = ["#3B6D11", "#F5DA27", "#A32D2D"]
+            ),legend=alt.Legend(title="Accuracy")),
         tooltip=["Driver:N",
                  alt.Tooltip("ModelRank:Q", title="Predicted"),
                  alt.Tooltip("ActualFinish:Q", title="Actual"),
