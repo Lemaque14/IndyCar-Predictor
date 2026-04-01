@@ -8,9 +8,9 @@ from pycaret.regression import load_model, predict_model
 Base_dir = Path(__file__).resolve().parent
 
 # Paths to models and datset
-PRE_QUALY_MODEL = Base_dir/"models"/"indycar_rf_cat_prequaly_model_v1"
-POST_QUALY_MODEL = Base_dir/"models"/"indycar_cat_lgbm_br_postqualy_model_v1"
-DATASET = Base_dir/"datasets"/"IndyCar_dataset_v15.csv"
+PRE_QUALY_MODEL = Base_dir/"models"/"indycar_rf_cat_prequaly_model_v2"
+POST_QUALY_MODEL = Base_dir/"models"/"indycar_cat_lgbm_br_postqualy_model_v2"
+DATASET = Base_dir/"datasets"/"IndyCar_dataset_v16.csv"
 
 # Load requested model
 @st.cache_resource
